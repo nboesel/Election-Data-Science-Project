@@ -1,0 +1,370 @@
+import pandas as pd
+import numpy as np
+import seaborn as sns
+from scipy import stats
+import scipy.spatial.distance as spd
+import scipy.cluster.hierarchy as sph
+import sklearn as sk
+import sklearn.metrics as skm
+import sklearn.cluster as skc
+import sklearn.decomposition as skd
+import sklearn.mixture as skmix
+%matplotlib inline
+import warnings
+warnings.filterwarnings('ignore')
+sns.set_context("notebook")  
+from pylab import rcParams
+import matplotlib.pyplot as plt
+plt.rcParams.update({'font.size': 19})
+sns.set(font_scale=1.5)
+plt.rcParams['figure.figsize'] = 7,4
+from statsmodels.graphics.mosaicplot import mosaic
+
+
+import plotly.plotly as py
+
+from bokeh.io import output_notebook, show
+from bokeh.plotting import figure
+output_notebook()
+from bokeh.charts import Scatter
+from bokeh.charts import Bar
+from bokeh.charts import Histogram
+from bokeh.layouts import gridplot
+from bokeh.models import ColumnDataSource
+from bokeh.layouts import row
+
+from IPython.core.display import HTML
+css = open('style-table.css').read() + open('style-notebook.css').read()
+HTML('<style>{}</style>'.format(css))
+ BokehJS 0.12.7 successfully loaded.
+Out[237]:
+In [47]:
+
+#Read in the data sets
+county_facts = pd.read_csv('county_facts.csv')
+county_facts_description = pd.read_csv('county_facts_dictionary.csv')
+primary_results = pd.read_csv('primary_results.csv')
+
+#Replace all the commas in the primary results datasets so that the two FIPS can be compared
+for x in primary_results.fips:
+    repr(x).replace(',', '')
+In [ ]:
+
+
+In [224]:
+
+#Question 1 - Are the counties that voted for Hillary over Bernie tend to be more white and wealthier?
+
+#Identify the counties in which Bernie won and Hillary won
+Bernie_wins = primary_results[(primary_results['candidate'] == 'Bernie Sanders') & (primary_results['fraction_votes'] > .5)]
+Hillary_wins = primary_results[(primary_results['candidate'] == 'Hillary Clinton') & (primary_results['fraction_votes'] > .5)]
+
+
+#Identify the counties in which Bernie or Hillary won by a large amount
+Bernie_dominates = primary_results[(primary_results['candidate'] == 'Bernie Sanders') & (primary_results['fraction_votes'] > .75)]
+Hillary_dominates = primary_results[(primary_results['candidate'] == 'Hillary Clinton') & (primary_results['fraction_votes'] > .75)]
+
+In [315]:
+
+cf = county_facts
+#Grab all the FIPS for the counties that Bernie and Hillary won
+B_fips = Bernie_wins['fips']
+H_fips = Hillary_wins['fips']
+
+#Get the county stats for the counties that Bernie or Hillary won
+Bernie_stats = cf[(cf['fips'].isin(B_fips))]
+Hillary_stats = cf[(cf['fips'].isin(H_fips))]
+
+#Repeat the same process for the counties that Bernie or Hillary won by a large amount
+BD_fips = Bernie_dominates['fips']
+HD_fips = Hillary_dominates['fips']
+
+Bernie_dominates_stats = cf[(cf['fips'].isin(BD_fips))]
+Hillary_dominates_stats = cf[(cf['fips'].isin(HD_fips))]
+In [81]:
+
+#Import fourPlot code
+def fourPlot( series ):
+    sns.set(font_scale=1)
+    fig, axs = plt.subplots(2,2)
+    plt.tight_layout(pad=0.4, w_pad=4, h_pad=2.0)
+
+    
+    sns.distplot(series, ax=axs[0,0])
+    
+   
+    lag = series.copy()
+    lag = np.array(lag[:-1])
+    current = series[1:]
+    ax = sns.regplot(current,lag,fit_reg=False, ax=axs[0,1])
+    ax.set_ylabel("y_i-1")
+    ax.set_xlabel("y_i")
+    
+    
+    qntls, xr = stats.probplot(series, fit=False)
+    sns.regplot(xr,qntls, ax=axs[1,0],ci=0)
+    
+    
+    ax = sns.regplot(np.arange(len(series)),series, ax=axs[1,1],ci=0)
+    ax.set_ylabel("val")
+    ax.set_xlabel("i")
+    sns.set(font_scale=1.5)
+
+In [91]:
+
+fourPlot(Hillary_stats['RHI125214'])
+
+In [87]:
+
+fourPlot(Hillary_stats['INC910213'])
+
+In [110]:
+
+fourPlot(Bernie_stats['RHI125214'])
+
+In [317]:
+
+fourPlot(Bernie_dominates_stats['RHI125214'])
+
+In [318]:
+
+fourPlot(Hillary_dominates_stats['RHI125214'])
+
+In [319]:
+
+fourPlot(Hillary_dominates_stats['INC910213'])
+
+In [320]:
+
+fourPlot(Bernie_dominates_stats['INC910213'])
+
+In [129]:
+
+#So now that we can see that Hillary did get votes from more diverse districts, maybe there were different and distinct 
+#groups who voted for her
+
+#Plot average income against percentage of population that is white in the counties that Bernie or Hillary won by a large amount
+bernie_plot = Bernie_dominates_stats.plot(kind='scatter', x='INC910213', y='RHI125214', color='b')    
+hillary_plot = Hillary_dominates_stats.plot(kind='scatter', x='INC910213', y='RHI125214', color='r', ax=bernie_plot)
+
+print(bernie_plot == hillary_plot)
+True
+
+In [140]:
+
+#Question 2 - Do Trump voters tend to be less educated versus the population?
+
+#Get the counties that Trump won and the statistics of those counties
+Trump_wins = primary_results[(primary_results['candidate'] == 'Donald Trump') & (primary_results['fraction_votes'] > .4)]
+T_fips = Trump_wins['fips']
+Trump_stats = cf[(cf['fips'].isin(T_fips))]
+
+In [147]:
+
+#Graph the percentage of the population that has a Bachlelors degree or higher for the Trump counties
+trump_hist = Histogram(Trump_stats, values='EDU685213', color='red',
+                 bins=20,
+                 plot_width=400, plot_height=300)
+#Graph the same percentage for the population
+country_hist = Histogram(county_facts, values='EDU685213', color='purple',
+                 bins=20,
+                 plot_width=400, plot_height=300)
+show(row(trump_hist, country_hist))
+In [148]:
+
+#Import stats code
+def statsCalculator( df ):
+    statsDF = pd.DataFrame()
+    for seriesIndex in df:
+        currentSeries = df[seriesIndex] 
+        seriesMean = np.mean(currentSeries)
+        seriesMedian = np.median(currentSeries)
+        seriesVariance = np.var(currentSeries)
+        seriesStdev = np.std(currentSeries)
+        seriesMode = stats.mode(currentSeries)
+        
+        statsDF[seriesIndex] = pd.Series([seriesMean, seriesMedian, seriesVariance, seriesStdev, seriesMode],
+                                               index=['Mean', 'Median', 'Variance', 'Stdev', 'Mode'])
+    return statsDF;
+In [164]:
+
+#Only get numerical stats so that statsCalculator can work
+ts = Trump_stats.drop(columns = ['fips', 'area_name', 'state_abbreviation'])
+
+cs = county_facts.drop(columns = ['fips', 'area_name', 'state_abbreviation'])
+In [167]:
+
+statsCalculator(ts).EDU685213
+Out[167]:
+Mean               17.7977
+Median                  16
+Variance           58.2079
+Stdev              7.62941
+Mode        ([12.9], [21])
+Name: EDU685213, dtype: object
+In [166]:
+
+statsCalculator(cs).EDU685213
+Out[166]:
+Mean               19.9062
+Median                17.7
+Variance           78.4211
+Stdev              8.85557
+Mode        ([17.0], [29])
+Name: EDU685213, dtype: object
+In [168]:
+
+#Graph the percentage of the population that has Bachelors or higher  in the counties that Trump won
+sns.boxplot(x=Trump_stats['EDU685213'])
+Out[168]:
+<matplotlib.axes._subplots.AxesSubplot at 0x1a156d6b00>
+
+In [170]:
+
+#Graph the percentage of the population that has Bachelors or higher in the country
+sns.boxplot(x=county_facts['EDU685213'])
+Out[170]:
+<matplotlib.axes._subplots.AxesSubplot at 0x1a156ed278>
+
+In [304]:
+
+#Question 3 - Does lower vote turnouts bode better for Trump? How about in the swing states?
+
+#Get all of Trump's vote totals
+trump_votes = primary_results[primary_results['candidate'] == 'Donald Trump']
+#Total up the amount of votes cast for Republican candidates in each state
+total_votes = primary_results[primary_results['party'] == 'Republican'].groupby('state').sum()['votes']
+#Take a mean of Trump's vote percentage in each state
+vote_pct = trump_votes.groupby('state').mean()['fraction_votes']
+
+#Create a new dataframe for analysis with each state's total votes cast for Republican candidates and his average vote
+#percentage for those states
+all_votes = pd.DataFrame()
+all_votes['total votes'] = total_votes
+all_votes['vote percentage'] = vote_pct
+
+#Graph the correlation between total votes and Trump's vote percentage in those states
+g = sns.JointGrid(x='total votes',y='vote percentage', data=all_votes)
+g = g.plot(sns.regplot, sns.distplot)
+g = g.annotate(stats.pearsonr)
+
+In [311]:
+
+#Repeat same steps for Pennsylvania
+trump_votes_PA = primary_results[primary_results['candidate'] == 'Donald Trump']
+trump_votes_PA = trump_votes_PA[trump_votes_PA['state_abbreviation'] == 'PA']
+total_votes_PA = primary_results[(primary_results['party'] == 'Republican') & (primary_results['state_abbreviation'] == 'PA')].groupby('fips').sum()['votes']
+
+
+vote_pct_PA = trump_votes_PA.groupby('fips').mean()['fraction_votes']
+
+all_votes_PA = pd.DataFrame()
+all_votes_PA['total votes'] = total_votes_PA
+all_votes_PA['vote percentage'] = vote_pct_PA
+​
+g = sns.JointGrid(x='total votes',y='vote percentage', data=all_votes_PA)
+g = g.plot(sns.regplot, sns.distplot)
+g = g.annotate(stats.pearsonr)
+
+In [312]:
+
+trump_votes_IA = primary_results[primary_results['candidate'] == 'Donald Trump']
+trump_votes_IA = trump_votes_IA[trump_votes_IA['state_abbreviation'] == 'IA']
+total_votes_IA = primary_results[(primary_results['party'] == 'Republican') & (primary_results['state_abbreviation'] == 'IA')].groupby('fips').sum()['votes']
+
+
+vote_pct_IA = trump_votes_IA.groupby('fips').mean()['fraction_votes']
+
+all_votes_IA = pd.DataFrame()
+all_votes_IA['total votes'] = total_votes_IA
+all_votes_IA['vote percentage'] = vote_pct_IA
+
+g = sns.JointGrid(x='total votes',y='vote percentage', data=all_votes_IA)
+g = g.plot(sns.regplot, sns.distplot)
+g = g.annotate(stats.pearsonr)
+
+In [313]:
+
+trump_votes_WI = primary_results[primary_results['candidate'] == 'Donald Trump']
+trump_votes_WI = trump_votes_WI[trump_votes_WI['state_abbreviation'] == 'WI']
+total_votes_WI = primary_results[(primary_results['party'] == 'Republican') & (primary_results['state_abbreviation'] == 'WI')].groupby('fips').sum()['votes']
+
+
+vote_pct_WI = trump_votes_WI.groupby('fips').mean()['fraction_votes']
+​
+all_votes_WI = pd.DataFrame()
+all_votes_WI['total votes'] = total_votes_WI
+all_votes_WI['vote percentage'] = vote_pct_WI
+
+g = sns.JointGrid(x='total votes',y='vote percentage', data=all_votes_WI)
+g = g.plot(sns.regplot, sns.distplot)
+g = g.annotate(stats.pearsonr)
+
+In [297]:
+
+#Question 4 - How does each state compare with vets as a percentage of their population?
+
+#Get the total amount of vets in each state 
+vet_stats = county_facts.groupby('state_abbreviation').sum()['VET605213']
+
+#Get the population of each state
+pop_stats = county_facts.groupby('state_abbreviation').sum()['PST045214']
+
+#Drop District of Columbia because they aren't included in the map
+pop_stats.drop(['DC'])
+
+
+#Create a dataframe out of the series from the vet populations in each state
+vets = pd.DataFrame({'states':vet_stats.index, 'vet_pop':vet_stats.values})
+
+#Input the total population of each state into the dataframe
+vets['total_pop'] = pop_stats.values
+
+#Get the per capita numbers for vets in each state
+vets['per_capita'] = vets['vet_pop'] / vets['total_pop']
+
+#Drop District of Columbia
+vets.drop(7)
+
+#Convert each column to a string
+for col in vets.columns:
+    vets[col] = vets[col].astype(str)
+
+#Set the color scale
+scl = [[0.0, 'rgb(242,240,247)'],[0.2, 'rgb(218,218,235)'],[0.4, 'rgb(188,189,220)'],\
+            [0.6, 'rgb(158,154,200)'],[0.8, 'rgb(117,107,177)'],[1.0, 'rgb(84,39,143)']]
+
+#Set the graph characteristics
+data = [ dict(
+        type='choropleth',
+        colorscale = scl,
+        autocolorscale = False,
+        locations = vets['states'],
+        z = vets['per_capita'].astype(float),
+        locationmode = 'USA-states',
+        marker = dict(
+            line = dict (
+                color = 'rgb(255,255,255)',
+                width = 2
+            ) ),
+        colorbar = dict(
+            title = "% Vets of Population")
+        ) ]
+
+#Set the legend characteristics
+layout = dict(
+        title = 'Vet Populations Per Capita',
+        geo = dict(
+            scope='usa',
+            projection=dict( type='albers usa' ),
+            showlakes = True,
+            lakecolor = 'rgb(255, 255, 255)'),
+             )
+    
+fig = dict( data=data, layout=layout )
+py.iplot( fig, filename='d3-cloropleth-map' )
+Out[297]:
+
+In [ ]:
+
+
