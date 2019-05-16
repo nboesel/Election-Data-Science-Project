@@ -365,6 +365,6 @@ fig = dict( data=data, layout=layout )
 py.iplot( fig, filename='d3-cloropleth-map' )
 Out[297]:
 
-In [ ]:
+
 
 
